@@ -6,22 +6,19 @@ from datetime import datetime
 from seleniumbase import SB
 
 # 环境变量配置(可以直接私库在双引号里填写)
-USERNAME      = os.environ.get("USERNAME") or ""               # 用户名
-USER_ID       = os.environ.get("USER_ID") or ""                # 用户ID
-SESSION_TOKEN = os.environ.get("SESSION_TOKEN") or ""          # session token
+EAMIL         = os.environ.get("EAMIL") or "xxxxx@gmail.com"   # 邮箱,只用于通知使用，可随意填写
+SESSION_TOKEN = os.environ.get("SESSION_TOKEN") or ""          # session token，必须填写
 GH_TOKEN      = os.environ.get("GH_TOKEN") or ""               # GitHub PAT token,用于自动更新session token
 TG_CHAT_ID    = os.environ.get("TG_CHAT_ID") or ""             # TG chat id,不填写不通知，需和bot token一起填写生效
 TG_BOT_TOKEN  = os.environ.get("TG_BOT_TOKEN") or ""           # TG bot token 
 
-if not SESSION_TOKEN or not USERNAME or not USER_ID:
-    print("ℹ️ 未配置 SESSION_TOKEN、USERNAME或USER_ID,脚本终止。")
+if not SESSION_TOKEN :
+    print("ℹ️ 未配置 SESSION_TOKEN,脚本终止。")
     sys.exit(1)
 
 # 构造cookie
 COOKIES = {
     "session_token": SESSION_TOKEN,
-    "user_id": USER_ID,
-    "username": USERNAME,
     "login": "true",
     "theme": "system",
 }
@@ -49,7 +46,7 @@ def should_update_cookie(new_value, old_value, expiry_dt, days_threshold=3):
             return True
     return False
 
-# 更新cookie到secret
+# 更新cookie到secrets
 def update_github_secret(secret_name, new_value):
     if not new_value:
         print(f"⚠️ 跳过更新 {secret_name}：新值为空")
@@ -89,11 +86,20 @@ def send_telegram_message(message: str):
 # 通知格式
 def format_notification(status: str, extra: str = "", error: str = "", expiry_date: str = "") -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if '@' in EMAIL:
+        name, domain = EMAIL.split('@', 1)
+        if len(name) > 4:
+            masked_email = f"{name[:2]}****{name[-2:]}@{domain}"
+        else:
+            masked_email = f"{name}@{domain}"
+    else:
+        masked_email = EMAIL[:2] + '****' 
+    
     lines = [
         "🇫🇮 Bot-hosting 续期通知",
         "",
         f"{status}",
-        f"👤 登录账户: {USERNAME}",
+        f"👤 登录账户: {EMAIL}",
     ]
     if expiry_date:
         lines.append(f"📅 到期时间: {expiry_date}")
@@ -112,79 +118,11 @@ def wait_for_turnstile_pass(sb, timeout=30):
         page_lower = sb.get_page_source().lower()
         if not any(x in page_lower for x in cf_indicators):
             print("✅ Turnstile 验证已通过")
-            # sb.save_screenshot("turnstile_passed.png")
+            sb.save_screenshot("turnstile_passed.png")
             return True
         sb.sleep(1)
     print("   ❌ Turnstile 验证超时未通过")
     return False
-
-# 底层点击验证：通过 xdotool 在屏幕坐标处点击
-def _xdotool_click(x: int, y: int):
-    try:
-        subprocess.run(["xdotool", "click", "--window", "root", f"{x}", f"{y}"],
-                       capture_output=True, text=True, timeout=5)
-    except Exception:
-        # 回退方案：用 pyautogui 或 mouse 点击
-        try:
-            import pyautogui
-            pyautogui.click(x, y)
-        except Exception as e:
-            print(f"⚠️ 底层点击失败: {e}")
-
-# 底层点击 Turnstile：通过 JS 定位验证框坐标，再用 xdotool 点击
-def _click_turnstile(sb):
-    # 1. 通过 JS 获取 Turnstile iframe / input 的屏幕坐标
-    try:
-        coords = sb.execute_script("""
-            var iframes = document.querySelectorAll('iframe');
-            for (var i = 0; i < iframes.length; i++) {
-                var src = iframes[i].src || '';
-                if (src.includes('cloudflare') || src.includes('turnstile') || src.includes('challenges')) {
-                    var r = iframes[i].getBoundingClientRect();
-                    if (r.width > 0 && r.height > 0)
-                        return {cx: Math.round(r.x + 30), cy: Math.round(r.y + r.height / 2)};
-                }
-            }
-            var inp = document.querySelector('input[name="cf-turnstile-response"]');
-            if (inp) {
-                var p = inp.parentElement;
-                for (var j = 0; j < 5; j++) {
-                    if (!p) break;
-                    var r = p.getBoundingClientRect();
-                    if (r.width > 100 && r.height > 30)
-                        return {cx: Math.round(r.x + 30), cy: Math.round(r.y + r.height / 2)};
-                    p = p.parentElement;
-                }
-            }
-            return null;
-        """)
-    except Exception as e:
-        print(f"⚠️ 获取 Turnstile 坐标失败: {e}")
-        return
-
-    if not coords:
-        print("⚠️ 无法定位 Turnstile 坐标")
-        return
-
-    # 2. 获取窗口位置信息以计算绝对屏幕坐标
-    try:
-        wi = sb.execute_script("""
-            return {
-                sx: window.screenX || 0,
-                sy: window.screenY || 0,
-                oh: window.outerHeight,
-                ih: window.innerHeight
-            };
-        """)
-    except Exception:
-        wi = {"sx": 0, "sy": 0, "oh": 800, "ih": 768}
-
-    bar = wi["oh"] - wi["ih"]
-    ax = int(coords["cx"]) + int(wi["sx"])
-    ay = int(coords["cy"]) + int(wi["sy"]) + int(bar)
-    print(f"🖱️ 底层点击 Turnstile ({ax}, {ay})")
-    _xdotool_click(ax, ay)
-    time.sleep(3)
 
 # 检查页面是否被限流
 def is_page_blocked(sb) -> bool:
@@ -251,7 +189,7 @@ def main():
         print(f"🔗 挂载代理: {PROXY_SERVER}")
         sb_kwargs["proxy"] = PROXY_SERVER
     else:
-        print("🌐 未使用代理，直连访问")
+        print("🍭 未使用代理，直连访问")
 
     with SB(**sb_kwargs) as sb:
         try:
@@ -296,14 +234,14 @@ def main():
             print("🔒 检测到 Turnstile 验证，开始处理...")
             turnstile_passed = False
 
-            # 第一步：最多 3 次重试 uc_gui_click_captcha
+            # 最多 3 次重试
             for attempt in range(1, 4):
                 print(f"🖱️ 第 {attempt}/3 次尝试点击 Turnstile...")
                 try:
                     sb.uc_gui_click_captcha()
                     time.sleep(8)
                 except Exception as e:
-                    print(f"⚠️ GUI点击出错: {e}")
+                    print(f"⚠️ 点击出错: {e}")
 
                 if wait_for_turnstile_pass(sb, timeout=20):
                     turnstile_passed = True
@@ -315,25 +253,6 @@ def main():
                         sb.refresh()
                         sb.wait_for_ready_state_complete()
                         sb.sleep(8)
-
-            # 第二步：3 次都失败，使用底层点击 _click_turnstile
-            if not turnstile_passed:
-                print("⚠️ Turnstil仍未通过，尝试底层点击...")
-                try:
-                    _click_turnstile(sb)
-                    time.sleep(3)
-                    if wait_for_turnstile_pass(sb, timeout=15):
-                        turnstile_passed = True
-                        print("✅ 底层点击 Turnstile 验证通过")
-                    else:
-                        print("⚠️ 底层点击后仍未通过，再试一次...")
-                        _click_turnstile(sb)
-                        time.sleep(3)
-                        if wait_for_turnstile_pass(sb, timeout=15):
-                            turnstile_passed = True
-                            print("✅ 第二次底层点击 Turnstile 验证通过")
-                except Exception as e:
-                    print(f"❌ 底层点击失败: {e}")
 
             if not turnstile_passed:
                 print("❌ Turnstile 验证最终未通过，脚本退出")
@@ -376,7 +295,7 @@ def main():
                         print(f"🔍 找到文本: {line.strip()}")
                         break
             except Exception as e:
-                print(f"   ⚠️ 获取可见文本失败: {e}")
+                print(f"⚠️ 获取可见文本失败: {e}")
 
         print("🔍 检查续期按钮...")
         page_text = sb.get_page_source()
