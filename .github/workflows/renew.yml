@@ -31,8 +31,7 @@ jobs:
         env:
           NODE_LINK: ${{ secrets.NODE_LINK }}
         run: |
-          wget https://main.ssss.nyc.mn/setup_proxy.sh && chmod +x setup_proxy.sh
-          ./setup_proxy.sh
+          bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
       - name: 🚀 运行续期脚本
         env:
@@ -51,7 +50,7 @@ jobs:
           pkill -f chromedriver || true
           pkill -f chrome || true
           pkill -f Xvfb || true
-          rm -f sing-box sing-box-config.json sing-box.log setup_proxy.sh
+          rm -f sing-box sing-box-config.json sing-box.log
 
       - name: 🧹 清理旧的工作流运行记录
         if: always()
